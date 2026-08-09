@@ -1,6 +1,6 @@
-name: 内核构建 - 通用 (Generic)
+name: Kernel Build - Generic
 
-# 适配 Node.js 24
+# Node.js 24 compatibility
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
@@ -11,88 +11,88 @@ permissions:
 on:
   workflow_dispatch:
     inputs:
-      # ==================== 内核源码配置 ====================
+      # ==================== Kernel Source Config ====================
       kernel_repo:
-        description: "内核源码仓库地址 (git URL)"
+        description: "Kernel source repository URL (git URL)"
         required: true
         type: string
       kernel_branch:
-        description: "分支名"
+        description: "Branch name"
         required: true
         type: string
       enable_kpm:
-        description: "启用 CONFIG_KPM=y (arch/arm64/configs/gki_defconfig)"
+        description: "Enable CONFIG_KPM=y (arch/arm64/configs/gki_defconfig)"
         required: true
         type: boolean
         default: false
 
-      # ==================== 基础配置 ====================
+      # ==================== Basic Config ====================
       android_version:
-        description: "Android 版本 (例如 android12)"
+        description: "Android version (e.g. android12)"
         required: true
         type: string
         default: "android12"
       kernel_version:
-        description: "内核版本 (例如 5.10)"
+        description: "Kernel version (e.g. 5.10)"
         required: true
         type: string
         default: "5.10"
       sub_level:
-        description: "子版本号 (例如 66)"
+        description: "Sub-level number (e.g. 66)"
         required: true
         type: string
       os_patch_level:
-        description: "补丁级别 (例如 2022-01)"
+        description: "OS patch level (e.g. 2022-01)"
         required: true
         type: string
       revision:
-        description: "GKI revision (例如 r11，可选)"
+        description: "GKI revision (e.g. r11, optional)"
         required: false
         type: string
         default: ""
 
-      # KernelSU 变体固定为 ReSukiSU
+      # KernelSU variant is fixed to ReSukiSU
       kernelsu_branch:
-        description: "KSU 分支 (main/builtin/自定义commit hash，留空使用默认)"
+        description: "KSU branch (main/builtin/custom commit hash, leave empty for default)"
         required: false
         type: string
         default: ""
       version:
-        description: "自定义版本名 (可选)"
+        description: "Custom version name (optional)"
         required: false
         type: string
       build_time:
-        description: "自定义构建时间 (可选，N或留空=当前UTC)"
+        description: "Custom build time (optional, N or empty = current UTC)"
         required: false
         type: string
         default: "Sun Dec 01 08:10:00 UTC 2024"
       use_zram:
-        description: "启用 ZRAM 增强算法"
+        description: "Enable ZRAM enhanced algorithms"
         required: true
         type: boolean
         default: false
       use_bbg:
-        description: "启用 BBG 防格机"
+        description: "Enable BBG (Baseband Guard)"
         required: true
         type: boolean
         default: false
       use_rekernel:
-        description: "启用 Re-Kernel 驱动"
+        description: "Enable Re-Kernel driver"
         required: false
         type: boolean
         default: false
       cve_2026_43499_patch:
-        description: "应用 CVE-2026-43499 rtmutex 修复链"
+        description: "Apply CVE-2026-43499 rtmutex fix chain"
         required: false
         type: boolean
         default: true
       cancel_susfs:
-        description: "禁用 SUSFS"
+        description: "Disable SUSFS"
         required: true
         type: boolean
         default: false
       droidspaces:
-        description: "Droidspaces 容器支持"
+        description: "Droidspaces container support"
         required: false
         type: choice
         options:
@@ -102,7 +102,7 @@ on:
           - "345"
         default: "off"
       droidspaces_ntsync:
-        description: "启用 Droidspaces 容器 NTSync 支持（需启用 Droidspaces）"
+        description: "Enable Droidspaces container NTSync support (requires Droidspaces)"
         required: false
         type: boolean
         default: false
