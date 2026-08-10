@@ -187,17 +187,38 @@ jobs:
           git clone https://github.com/ReSukiSU-GKI/AnyKernel3.git -b "master"
           rm -rf AnyKernel3/.git
 
-      - name: Clone vanilla kernel source
-        working-directory: ${{ env.KERNEL_ROOT }}
+      - name: Setup repo tool
         run: |
-          mkdir -p common
-          git clone --depth 1 -b "${{ inputs.kernel_source_branch }}" "${{ inputs.kernel_source_url }}" common
-          echo "SOURCE_COMMIT=$(git -C common rev-parse HEAD)" >> $GITHUB_ENV
+          mkdir -p "$GITHUB_WORKSPACE/git-repo"
+          curl -L https://storage.googleapis.com/git-repo-downloads/repo -o "$GITHUB_WORKSPACE/git-repo/repo"
+          chmod 0755 "$GITHUB_WORKSPACE/git-repo/repo"
+          echo "$GITHUB_WORKSPACE/git-repo" >> "$GITHUB_PATH"
+          echo "REPO=$GITHUB_WORKSPACE/git-repo/repo" >> $GITHUB_ENV
 
-      - name: Clone GCC toolchain
+      - name: Sync AOSP build tree
         working-directory: ${{ env.KERNEL_ROOT }}
         run: |
           git clone https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-gnu-6.4.1.git gcc
+
+          FORMATTED_BRANCH="${{ inputs.android_version }}-${{ inputs.kernel_version }}-${{ inputs.os_patch_level }}"
+          $REPO init --depth=1 -u https://android.googlesource.com/kernel/manifest -b common-${FORMATTED_BRANCH} --repo-rev=v2.16
+
+          REMOTE_BRANCH=$(git ls-remote https://android.googlesource.com/kernel/common ${FORMATTED_BRANCH})
+          DEFAULT_MANIFEST_PATH=.repo/manifests/default.xml
+
+          if grep -q deprecated <<< $REMOTE_BRANCH; then
+            sed -i "s/\"${FORMATTED_BRANCH}\"/\"deprecated\/${FORMATTED_BRANCH}\"/g" $DEFAULT_MANIFEST_PATH
+          fi
+
+          $REPO --trace sync -c -j$(nproc --all) --no-tags --fail-fast
+
+      - name: Replace common with vanilla kernel source
+        working-directory: ${{ env.KERNEL_ROOT }}
+        run: |
+          rm -rf common
+          git clone --depth 1 -b "${{ inputs.kernel_source_branch }}" "${{ inputs.kernel_source_url }}" common
+          rm -rf common/.git
+          echo "SOURCE_COMMIT=$(git ls-remote ${{ inputs.kernel_source_url }} ${{ inputs.kernel_source_branch }} | cut -f1)" >> $GITHUB_ENV
 
       - name: Apply stock config disguise
         run: |
