@@ -1,0 +1,305 @@
+name: Vanilla Kernel Build
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+permissions:
+  contents: write
+  actions: write
+
+on:
+  workflow_call:
+    inputs:
+      android_version:
+        required: true
+        type: string
+        default: "android12"
+      kernel_version:
+        required: true
+        type: string
+        default: "5.10"
+      sub_level:
+        required: true
+        type: string
+      os_patch_level:
+        required: true
+        type: string
+      kernel_source_url:
+        required: false
+        type: string
+        default: "https://github.com/Mkolpo90/android_kernel_common_android12-5.10.git"
+      kernel_source_branch:
+        required: false
+        type: string
+        default: "millennium-base"
+      build_time:
+        required: false
+        type: string
+        default: "Sun Dec 01 08:10:00 UTC 2024"
+  workflow_dispatch:
+    inputs:
+      android_version:
+        required: true
+        type: string
+        default: "android12"
+      kernel_version:
+        required: true
+        type: string
+        default: "5.10"
+      sub_level:
+        required: true
+        type: string
+      os_patch_level:
+        required: true
+        type: string
+      kernel_source_url:
+        required: false
+        type: string
+        default: "https://github.com/Mkolpo90/android_kernel_common_android12-5.10.git"
+      kernel_source_branch:
+        required: false
+        type: string
+        default: "millennium-base"
+      build_time:
+        required: false
+        type: string
+        default: "Sun Dec 01 08:10:00 UTC 2024"
+
+jobs:
+  build-kernel:
+    name: "${{ inputs.kernel_version }}.${{ inputs.sub_level }}-${{ inputs.android_version }}-${{ inputs.os_patch_level }}-Vanilla"
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    env:
+      CCACHE_COMPILERCHECK: "%compiler% -dumpmachine; %compiler% -dumpversion"
+      CCACHE_NOHASHDIR: "true"
+      CCACHE_HARDLINK: "true"
+
+    steps:
+      - name: Build info summary
+        run: |
+          echo "========================================"
+          echo "       Vanilla Kernel Build Info"
+          echo "========================================"
+          echo "Android version   : ${{ inputs.android_version }}"
+          echo "Kernel version    : ${{ inputs.kernel_version }}"
+          echo "Sub level         : ${{ inputs.sub_level }}"
+          echo "Patch level       : ${{ inputs.os_patch_level }}"
+          echo "Source repo       : ${{ inputs.kernel_source_url }}"
+          echo "Source branch     : ${{ inputs.kernel_source_branch }}"
+          echo "Build time        : ${{ inputs.build_time }}"
+          echo "Stock config      : auto-detect config/stock_defconfig"
+          echo "========================================"
+
+      - name: Free disk space
+        uses: endersonmenezes/free-disk-space@v3
+        with:
+          remove_android: true
+          remove_dotnet: true
+          remove_haskell: true
+          remove_tool_cache: true
+          remove_swap: true
+          remove_packages: "azure-cli google-cloud-cli microsoft-edge-stable google-chrome-stable firefox postgresql* temurin-* *llvm* mysql* dotnet-sdk-*"
+          remove_packages_one_command: true
+          remove_folders: "/usr/share/swift /usr/share/miniconda /usr/share/az* /usr/local/lib/node_modules /usr/local/share/chromium /usr/local/share/powershell /usr/local/julia /usr/local/aws-cli /usr/local/aws-sam-cli /usr/share/gradle"
+          rm_cmd: "rmz"
+          rmz_version: "3.1.1"
+          testing: false
+
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Initialize build environment
+        run: |
+          CONFIG="${{ inputs.android_version }}-${{ inputs.kernel_version }}-${{ inputs.sub_level }}"
+          KERNEL_ROOT="$GITHUB_WORKSPACE/$CONFIG"
+          mkdir -p "$KERNEL_ROOT"
+
+          cat >> $GITHUB_ENV << EOF
+          CONFIG=$CONFIG
+          KERNEL_ROOT=$KERNEL_ROOT
+          DEFCONFIG=$KERNEL_ROOT/common/arch/arm64/configs/gki_defconfig
+          ANYKERNEL3=$GITHUB_WORKSPACE/AnyKernel3
+          AVBTOOL=$GITHUB_WORKSPACE/kernel-build-tools/linux-x86/bin/avbtool
+          MKBOOTIMG=$GITHUB_WORKSPACE/mkbootimg/mkbootimg.py
+          UNPACK_BOOTIMG=$GITHUB_WORKSPACE/mkbootimg/unpack_bootimg.py
+          BOOT_SIGN_KEY_PATH=$GITHUB_WORKSPACE/kernel-build-tools/linux-x86/share/avb/testkey_rsa2048.pem
+          EOF
+
+      - name: Show configuration file
+        run: |
+          CONFIG_FILE="$GITHUB_WORKSPACE/config/config"
+          if [ -f "$CONFIG_FILE" ]; then
+            echo "Loading config file: $CONFIG_FILE"
+            cat "$CONFIG_FILE"
+          fi
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ccache python3 git curl build-essential libssl-dev bison flex libelf-dev dwarves
+
+      - name: Configure ccache
+        run: |
+          mkdir -p ~/.cache/bazel
+          ccache --version
+          ccache --max-size=2G
+          ccache --set-config=compression=true
+          echo "CCACHE_DIR=$HOME/.ccache" >> $GITHUB_ENV
+
+      - name: Restore ccache
+        uses: actions/cache@v5
+        with:
+          path: ~/.ccache
+          key: ${{ inputs.android_version }}-${{ inputs.kernel_version }}-${{ inputs.sub_level }}-ccache-${{ github.sha }}
+          restore-keys: |
+            ${{ inputs.android_version }}-${{ inputs.kernel_version }}-${{ inputs.sub_level }}-ccache-
+
+      - name: Cache toolchain
+        id: cache-toolchain
+        uses: actions/cache@v5
+        with:
+          path: |
+            kernel-build-tools
+            mkbootimg
+          key: toolchain-${{ runner.os }}-v1
+
+      - name: Download toolchain
+        if: steps.cache-toolchain.outputs.cache-hit != 'true'
+        run: |
+          AOSP_MIRROR=https://android.googlesource.com
+          BRANCH=main-kernel-build-2024
+          git clone $AOSP_MIRROR/kernel/prebuilts/build-tools -b $BRANCH --depth 1 kernel-build-tools
+          git clone $AOSP_MIRROR/platform/system/tools/mkbootimg -b $BRANCH --depth 1 mkbootimg
+
+      - name: Generate signing key
+        run: |
+          openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 > $BOOT_SIGN_KEY_PATH
+
+      - name: Configure Git
+        run: |
+          git config --global user.name "BuildBot"
+          git config --global user.email "BuildGkiKernel@gmail.com"
+
+      - name: Clone AnyKernel3
+        run: |
+          git clone https://github.com/ReSukiSU-GKI/AnyKernel3.git -b "master"
+          rm -rf AnyKernel3/.git
+
+      - name: Clone vanilla kernel source
+        working-directory: ${{ env.KERNEL_ROOT }}
+        run: |
+          mkdir -p common
+          git clone --depth 1 -b "${{ inputs.kernel_source_branch }}" "${{ inputs.kernel_source_url }}" common
+          echo "SOURCE_COMMIT=$(git -C common rev-parse HEAD)" >> $GITHUB_ENV
+
+      - name: Clone GCC toolchain
+        working-directory: ${{ env.KERNEL_ROOT }}
+        run: |
+          git clone https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-gnu-6.4.1.git gcc
+
+      - name: Apply stock config disguise
+        run: |
+          STOCK_SRC="$GITHUB_WORKSPACE/config/stock_defconfig"
+          STOCK_DST="$KERNEL_ROOT/common/arch/arm64/configs/stock_defconfig"
+
+          if [ ! -f "$STOCK_SRC" ]; then
+            echo "No $STOCK_SRC found, skipping stock config disguise."
+            exit 0
+          fi
+
+          mkdir -p "$(dirname "$STOCK_DST")"
+          if ! cp "$STOCK_SRC" "$STOCK_DST"; then
+            echo "::error::Failed to copy stock_defconfig: $STOCK_SRC -> $STOCK_DST"
+            exit 1
+          fi
+          echo "Copied stock_defconfig -> $STOCK_DST"
+
+          NEW_RULE='$(obj)/config_data: arch/arm64/configs/stock_defconfig FORCE'
+          OLD_RULE='$(obj)/config_data: $(KCONFIG_CONFIG) FORCE'
+          TARGET_MAKEFILE="$KERNEL_ROOT/common/kernel/Makefile"
+
+          if [ ! -f "$TARGET_MAKEFILE" ]; then
+            echo "::error::$TARGET_MAKEFILE not found"
+            exit 1
+          fi
+
+          if grep -qF "$OLD_RULE" "$TARGET_MAKEFILE"; then
+            sed -i "s|$OLD_RULE|$NEW_RULE|" "$TARGET_MAKEFILE"
+            echo "Patched $TARGET_MAKEFILE"
+          else
+            echo "Target rule not found in $TARGET_MAKEFILE, skipping patch."
+          fi
+
+      - name: Build kernel
+        uses: nick-fields/retry@v4
+        with:
+          timeout_minutes: 30
+          max_attempts: 3
+          retry_on: timeout
+          command: |
+            set -ex
+            cd "$KERNEL_ROOT"
+
+            sed -i 's/BUILD_SYSTEM_DLKM=1/BUILD_SYSTEM_DLKM=0/' ./common/build.config.gki.aarch64
+            sed -i '/MODULES_ORDER=android\/gki_aarch64_modules/d' ./common/build.config.gki.aarch64
+            sed -i '/KMI_SYMBOL_LIST_STRICT_MODE/d' ./common/build.config.gki.aarch64
+
+            LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh CC="/usr/bin/ccache clang" || exit 1
+            strings "out/${{ inputs.android_version }}-${{ inputs.kernel_version }}/dist/Image" | grep 'Linux version'
+
+      - name: Prepare kernel image
+        run: |
+          SRC_DIR="$KERNEL_ROOT/out/${{ inputs.android_version }}-${{ inputs.kernel_version }}/dist"
+          cp "$SRC_DIR/Image" ./
+
+      - name: Create AnyKernel3 package
+        run: |
+          cd $ANYKERNEL3
+          ZIP_NAME="${{ inputs.android_version }}-${{ inputs.kernel_version }}.${{ inputs.sub_level }}-${{ inputs.os_patch_level }}-Vanilla-AnyKernel3.zip"
+          mv ../Image ./Image
+          zip -r "../$ZIP_NAME" ./*
+
+      - name: Collect patch reject files
+        if: always()
+        run: |
+          REJECTS_DIR="$GITHUB_WORKSPACE/patch-rejects"
+          mkdir -p "$REJECTS_DIR"
+
+          mapfile -t REJS < <(find "$KERNEL_ROOT" -type f -name '*.rej')
+          REJ_COUNT=${#REJS[@]}
+          echo "Found $REJ_COUNT .rej files"
+          echo "REJ_COUNT=$REJ_COUNT" >> $GITHUB_ENV
+
+          if [ "$REJ_COUNT" -gt 0 ]; then
+            for REJ in "${REJS[@]}"; do
+              REL="${REJ#"$KERNEL_ROOT"/}"
+              DEST="$REJECTS_DIR/$REL"
+              mkdir -p "$(dirname "$DEST")"
+              cp "$REJ" "$DEST"
+
+              ORIG="${REJ%.rej}"
+              if [ -f "$ORIG" ]; then
+                cp "$ORIG" "${DEST%.rej}"
+              fi
+              echo "$REL" >> "$REJECTS_DIR/index.txt"
+            done
+          fi
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: VanillaKernel-${{ env.CONFIG }}
+          path: |
+            *AnyKernel3.zip
+          compression-level: 0
+
+      - name: Upload patch reject files
+        if: always() && env.REJ_COUNT > 0
+        uses: actions/upload-artifact@v6
+        with:
+          name: VanillaKernel-${{ env.CONFIG }}-Rejects
+          path: patch-rejects/
+          if-no-files-found: ignore
+          compression-level: 9
